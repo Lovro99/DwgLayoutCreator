@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>dwg_layout_creator</AssemblyName>
+    <RootNamespace>DwgLayoutCreator</RootNamespace>
+    <!-- Self-contained: ne treba instaliran .NET na ciljanim računalima -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Smanjuje veličinu binaryja -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- ACadSharp: MIT-licensed .NET library za nativno čitanje/pisanje DWG/DXF -->
+    <PackageReference Include="ACadSharp" Version="3.5.7" />
+  </ItemGroup>
+</Project>
