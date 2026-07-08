@@ -35,6 +35,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -49,6 +51,9 @@ OK, WARN, ERR = "OK", "WARN", "ERR"
 _RESULT_RE = re.compile(r"RESULT\|\s*created=(\d+)\s+candidates=(\d+)")
 _CREATED_RE = re.compile(r"^\s*CREATED\|\s*(.+?)\s*$", re.MULTILINE)
 _SASTERR_RE = re.compile(r"ERR\|\s*sastAu\.dwg not found")
+# Live-progress signali iz plugina (LayoutBuilder ispisuje "[5/5] Done — ... 'ime'").
+_FOUND_RE = re.compile(r"Found (\d+) block")
+_DONE_RE = re.compile(r"\[5/5\].*?'([^']+)'")
 
 
 # ---------------------------------------------------------------------------
@@ -150,16 +155,60 @@ class PassResult:
     timed_out: bool
 
 
-def run_accore(cfg: Config, dwg: Path, scr: Path, env: dict) -> PassResult:
+def run_accore(cfg: Config, dwg: Path, scr: Path, env: dict, on_line=None) -> PassResult:
+    """Pokreni accoreconsole. Ako je on_line zadan, streamaj stdout uzivo i zovi
+    on_line(line) za svaku dovrsenu liniju (za live progress). Inace jednostavno
+    uhvati cijeli izlaz na kraju."""
     cmd = [str(cfg.accoreconsole), "/i", str(dwg), "/s", str(scr), "/l", cfg.lang]
-    try:
-        proc = subprocess.run(
-            cmd, capture_output=True, timeout=cfg.timeout_s, env=env
-        )
-        return PassResult(proc.returncode, decode_accore(proc.stdout), False)
-    except subprocess.TimeoutExpired as exc:
-        out = decode_accore(exc.stdout or b"")
-        return PassResult(-1, out, True)
+
+    if on_line is None:
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=cfg.timeout_s, env=env)
+            return PassResult(proc.returncode, decode_accore(proc.stdout), False)
+        except subprocess.TimeoutExpired as exc:
+            return PassResult(-1, decode_accore(exc.stdout or b""), True)
+
+    # streaming put: citac u thread-u puni buffer, glavni thread emitira nove linije
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    raw = bytearray()
+    lock = threading.Lock()
+
+    def reader() -> None:
+        while True:
+            chunk = proc.stdout.read(4096)  # type: ignore[union-attr]
+            if not chunk:
+                break
+            with lock:
+                raw.extend(chunk)
+
+    th = threading.Thread(target=reader, daemon=True)
+    th.start()
+
+    def snapshot_lines() -> list[str]:
+        with lock:
+            return decode_accore(bytes(raw)).split("\n")
+
+    start = time.monotonic()
+    emitted = 0
+    timed_out = False
+    while proc.poll() is None:
+        if time.monotonic() - start > cfg.timeout_s:
+            proc.kill()
+            timed_out = True
+            break
+        time.sleep(0.4)
+        complete = snapshot_lines()[:-1]  # zadnja je mozda nedovrsena
+        for line in complete[emitted:]:
+            on_line(line)
+        emitted = len(complete)
+
+    th.join(timeout=2)
+    for line in snapshot_lines()[emitted:]:  # zavrsni flush
+        on_line(line)
+    with lock:
+        text = decode_accore(bytes(raw))
+    rc = proc.returncode if proc.returncode is not None else -1
+    return PassResult(rc, text, timed_out)
 
 
 def parse_create(stdout: str) -> tuple[list[str], int | None, int | None]:
@@ -183,7 +232,25 @@ class Row:
     poruka: str
 
 
-def process_file(cfg: Config, dwg: Path, log: logging.Logger) -> list[Row]:
+def make_progress_printer(name: str):
+    """Vraca on_line callback koji ispisuje 'X/N layouta' u istoj liniji (\\r)."""
+    state = {"done": 0, "total": None}
+
+    def on_line(line: str) -> None:
+        fm = _FOUND_RE.search(line)
+        if fm:
+            state["total"] = int(fm.group(1))
+        dm = _DONE_RE.search(line)
+        if dm:
+            state["done"] += 1
+            tot = f"/{state['total']}" if state["total"] else ""
+            sys.stdout.write(f"\r    {name}: {state['done']}{tot} layouta  ({dm.group(1)})        ")
+            sys.stdout.flush()
+
+    return on_line
+
+
+def process_file(cfg: Config, dwg: Path, log: logging.Logger, live: bool = False) -> list[Row]:
     name = dwg.name
 
     if not dwg.is_file():
@@ -208,7 +275,11 @@ def process_file(cfg: Config, dwg: Path, log: logging.Logger) -> list[Row]:
                             __DLL_PATH__=lisp_path(cfg.plugin_dll)),
             encoding="ascii",
         )
-        res = run_accore(cfg, copy, create_scr, env)
+        on_line = make_progress_printer(name) if live else None
+        res = run_accore(cfg, copy, create_scr, env, on_line=on_line)
+        if live:
+            sys.stdout.write("\n")  # zatvori \r progres liniju
+            sys.stdout.flush()
         log.info("[%s] create exit=%s timeout=%s", name, res.returncode, res.timed_out)
 
         if res.timed_out:
@@ -361,14 +432,22 @@ def main() -> None:
     preflight(cfg)
 
     all_rows: list[Row] = []
+    total = len(cfg.projekti)
     if cfg.jobs > 1:
+        # paralelno: live \r progres bi se ispreplitao, pa samo start/kraj po datoteci
         with ThreadPoolExecutor(max_workers=cfg.jobs) as ex:
             futures = {ex.submit(process_file, cfg, p, log): p for p in cfg.projekti}
+            done = 0
             for fut in as_completed(futures):
-                all_rows.extend(fut.result())
+                done += 1
+                rows = fut.result()
+                all_rows.extend(rows)
+                p = futures[fut]
+                log.info("[%d/%d] gotovo: %s", done, total, p.name)
     else:
-        for p in cfg.projekti:
-            all_rows.extend(process_file(cfg, p, log))
+        for i, p in enumerate(cfg.projekti, 1):
+            log.info("[%d/%d] %s — kreiram layoute...", i, total, p.name)
+            all_rows.extend(process_file(cfg, p, log, live=True))
 
     csv_path = write_csv(ts, all_rows)
 
