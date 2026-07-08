@@ -1,3 +1,10 @@
+#if CORECONSOLE
+// Headless core console (accoreconsole) has no UI Application layer (acmgd).
+// Bind the unqualified name `Application` to the core Application so the exact
+// same source compiles for both the interactive plugin and the core build.
+// See LayoutCrator/LayoutCreatorCore.
+using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+#endif
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -26,6 +33,30 @@ public class CreateLayoutCommand
             return;
         }
 
+        var (created, _) = RunCreateLayouts(db, ed, sastPath);
+
+#if !CORECONSOLE
+        // Force regen (equivalent to LISP "regenall"). Interactive-only:
+        // accoreconsole regenerates on open, and Document.SendStringToExecute
+        // is part of the UI layer (acmgd) that the core build does not reference.
+        doc.SendStringToExecute("regenall\n", false, false, false);
+#endif
+
+        ed.WriteMessage($"\nDone. {created} layout(s) created.");
+    }
+
+    // Shared layout-creation core, reused verbatim by both the interactive
+    // CREATELAYOUT command and the headless CREATELAYOUTBATCH command
+    // (LayoutCreatorCore). Scans model space and creates one layout per
+    // numbered paper-size block; returns (created, candidates) so batch
+    // callers can log and verify counts.
+    //
+    // `Application` resolves to the core Application in the core build (see the
+    // CORECONSOLE alias at the top of this file), so SetSystemVariable — which
+    // has the same signature on both the UI and core Application — runs headless.
+    internal static (int created, int candidates) RunCreateLayouts(
+        Database db, Editor ed, string sastPath)
+    {
         // --- Phase 1: read model space (single read transaction) ---
         List<BlockScanResult> candidates;
         List<string> existingLayouts;
@@ -80,10 +111,7 @@ public class CreateLayoutCommand
             }
         }
 
-        // Force regen (equivalent to LISP "regenall")
-        doc.SendStringToExecute("regenall\n", false, false, false);
-
-        ed.WriteMessage($"\nDone. {created} layout(s) created.");
+        return (created, candidates.Count);
     }
 
     // Scans model space and prints every BlockReference with its effective name and BR_N attribute.

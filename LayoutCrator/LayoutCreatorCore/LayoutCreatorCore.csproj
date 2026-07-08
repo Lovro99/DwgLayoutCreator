@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LayoutCreatorCore</AssemblyName>
+    <RootNamespace>LayoutCreator</RootNamespace>
+    <!-- Selects the core-console code paths in the SHARED sources (Application
+         alias, no SendStringToExecute regen). -->
+    <DefineConstants>$(DefineConstants);CORECONSOLE</DefineConstants>
+    <AcadDir Condition="'$(AcadDir)'==''">C:\Program Files\Autodesk\AutoCAD 2025\</AcadDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Core console references ONLY accoremgd + acdbmgd (no acmgd UI layer).
+         Not copied to output — already in-process under accoreconsole. -->
+    <Reference Include="accoremgd">
+      <HintPath>$(AcadDir)accoremgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="acdbmgd">
+      <HintPath>$(AcadDir)acdbmgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Share the exact same, already-debugged domain logic as the UI plugin
+         (link to the SAME .cs — do not copy). CORECONSOLE toggles the few
+         core-console differences inside those files. -->
+    <Compile Include="..\LayoutCreator\CreateLayoutCommand.cs"   Link="Shared\CreateLayoutCommand.cs" />
+    <Compile Include="..\LayoutCreator\LayoutBuilder.cs"         Link="Shared\LayoutBuilder.cs" />
+    <Compile Include="..\LayoutCreator\LayoutDefinitions.cs"     Link="Shared\LayoutDefinitions.cs" />
+    <Compile Include="..\LayoutCreator\ModelSpaceScanner.cs"     Link="Shared\ModelSpaceScanner.cs" />
+    <Compile Include="..\LayoutCreator\PageSetupConfigurator.cs" Link="Shared\PageSetupConfigurator.cs" />
+    <Compile Include="..\LayoutCreator\TitleBlockInserter.cs"    Link="Shared\TitleBlockInserter.cs" />
+  </ItemGroup>
+</Project>

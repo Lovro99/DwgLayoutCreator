@@ -1,3 +1,8 @@
+#if CORECONSOLE
+// See CreateLayoutCommand.cs: bind `Application` to the core Application so the
+// same source compiles headless (accoreconsole has no acmgd UI layer).
+using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+#endif
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
