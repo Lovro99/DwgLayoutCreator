@@ -212,14 +212,17 @@ def process_file(cfg: Config, dwg: Path, log: logging.Logger) -> list[Row]:
         log.info("[%s] create exit=%s timeout=%s", name, res.returncode, res.timed_out)
 
         if res.timed_out:
+            log.warning("[%s] create stdout (zadnjih 2000 zn.):\n%s", name, res.stdout[-2000:])
             return [Row(name, "", ERR, f"timeout > {cfg.timeout_s}s — original netaknut")]
         if _SASTERR_RE.search(res.stdout):
             return [Row(name, "", ERR, "sastAu.dwg nedostupan — original netaknut")]
         if res.returncode != 0:
+            log.warning("[%s] create stdout (zadnjih 2000 zn.):\n%s", name, res.stdout[-2000:])
             return [Row(name, "", ERR, f"accoreconsole exit code {res.returncode}")]
 
         created, created_n, candidates = parse_create(res.stdout)
         if created_n is None:
+            log.warning("[%s] create stdout (zadnjih 2000 zn.):\n%s", name, res.stdout[-2000:])
             return [Row(name, "", ERR,
                         "nema RESULT| u ispisu (NETLOAD/CREATELAYOUTBATCH nije prosao?)")]
 

@@ -243,8 +243,11 @@ public static class LayoutBuilder
         Extents2d margins  = layout.PlotPaperMargins;
         double vpW  = Math.Max(paperSize.X - margins.MinPoint.X - margins.MaxPoint.X, 10.0);
         double vpH  = Math.Max(paperSize.Y - margins.MinPoint.Y - margins.MaxPoint.Y, 10.0);
-        double vpCx = margins.MinPoint.X + vpW / 2.0;
-        double vpCy = margins.MinPoint.Y + vpH / 2.0;
+        // Center on the printable-area origin (0,0)->(vpW,vpH), SAME convention as
+        // the standard-layout viewport (CreateViewport). Adding margins.MinPoint
+        // here shifted every custom viewport up-right by the (25 mm binding) margin.
+        double vpCx = vpW / 2.0;
+        double vpCy = vpH / 2.0;
 
         AppendViewport(psBtr, tr, vpW, vpH, vpCx, vpCy, modelExtents);
     }
