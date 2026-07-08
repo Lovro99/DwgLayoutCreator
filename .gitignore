@@ -8,3 +8,5 @@ obj/
 # batch orchestrator run artifacts
 batch/logs/*.log
 batch/logs/*.csv
+__pycache__/
+*.pyc
