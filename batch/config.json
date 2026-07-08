@@ -1,0 +1,17 @@
+{
+  "accoreconsole": "C:\\Program Files\\Autodesk\\AutoCAD 2025\\accoreconsole.exe",
+  "plugin_dll": "C:\\Users\\Korisnik\\Documents\\SOFTWARE\\DwgLayoutCreator\\LayoutCrator\\LayoutCreatorCore\\bin\\Release\\net8.0-windows\\LayoutCreatorCore.dll",
+  "sastavnica": "C:\\PUT\\DO\\sastAu.dwg",
+  "timeout_s": 300,
+  "backup": true,
+  "jobs": 1,
+  "lang": "en-US",
+
+  "_projekti_komentar": "Navedi ILI 'projekti' (lista punih putanja) ILI 'folder'+'pattern'. JSON nema komentare pa ovo polje ignorira orkestrator.",
+  "projekti": [
+    "C:\\Projekti\\P100\\elektro.dwg",
+    "C:\\Projekti\\P101\\elektro.dwg"
+  ],
+
+  "_folder_primjer": "Umjesto 'projekti' moze: \"folder\": \"C:\\\\Projekti\", \"pattern\": \"**/elektro*.dwg\""
+}

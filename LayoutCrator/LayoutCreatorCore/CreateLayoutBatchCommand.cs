@@ -38,8 +38,12 @@ public class CreateLayoutBatchCommand
 
         var (created, candidates) = CreateLayoutCommand.RunCreateLayouts(db, ed, sastPath);
 
-        // Machine-parseable summary line the orchestrator scrapes from stdout.
-        ed.WriteMessage($"\nRESULT| created={created} candidates={candidates}");
+        // Machine-parseable lines the orchestrator scrapes from stdout: one
+        // CREATED| per new layout (verify pass confirms each name persisted),
+        // then a RESULT| summary.
+        foreach (string name in created)
+            ed.WriteMessage($"\nCREATED| {name}");
+        ed.WriteMessage($"\nRESULT| created={created.Count} candidates={candidates}");
     }
 
     // Resolution order: LAYOUT_SAST_PATH env var (set by the orchestrator) →

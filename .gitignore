@@ -5,3 +5,6 @@ obj/
 *.dll
 *.exe
 .claude/settings.local.json
+# batch orchestrator run artifacts
+batch/logs/*.log
+batch/logs/*.csv

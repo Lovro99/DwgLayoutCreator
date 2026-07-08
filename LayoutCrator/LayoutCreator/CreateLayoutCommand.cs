@@ -42,7 +42,7 @@ public class CreateLayoutCommand
         doc.SendStringToExecute("regenall\n", false, false, false);
 #endif
 
-        ed.WriteMessage($"\nDone. {created} layout(s) created.");
+        ed.WriteMessage($"\nDone. {created.Count} layout(s) created.");
     }
 
     // Shared layout-creation core, reused verbatim by both the interactive
@@ -54,7 +54,7 @@ public class CreateLayoutCommand
     // `Application` resolves to the core Application in the core build (see the
     // CORECONSOLE alias at the top of this file), so SetSystemVariable — which
     // has the same signature on both the UI and core Application — runs headless.
-    internal static (int created, int candidates) RunCreateLayouts(
+    internal static (List<string> created, int candidates) RunCreateLayouts(
         Database db, Editor ed, string sastPath)
     {
         // --- Phase 1: read model space (single read transaction) ---
@@ -75,7 +75,7 @@ public class CreateLayoutCommand
         ed.WriteMessage($"\nFound {candidates.Count} block(s) matching layout names.");
         ed.WriteMessage($"\nExisting layouts: {string.Join(", ", existingLayouts)}");
 
-        int created = 0;
+        var created = new List<string>();
 
         // --- Phase 2: create layouts (one transaction per layout) ---
         foreach (var result in candidates)
@@ -103,7 +103,7 @@ public class CreateLayoutCommand
                     LayoutBuilder.CreateStandardLayout(db, result, sastPath, ed);
 
                 existingLayouts.Add(result.LayoutName);
-                created++;
+                created.Add(result.LayoutName);
             }
             catch (System.Exception ex)
             {
