@@ -54,6 +54,7 @@ _SASTERR_RE = re.compile(r"ERR\|\s*sastAu\.dwg not found")
 # Live-progress signali iz plugina (LayoutBuilder ispisuje "[5/5] Done — ... 'ime'").
 _FOUND_RE = re.compile(r"Found (\d+) block")
 _DONE_RE = re.compile(r"\[5/5\].*?'([^']+)'")
+_EDU_RE = re.compile(r"educational", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +345,9 @@ def process_file(cfg: Config, dwg: Path, log: logging.Logger, live: bool = False
         if candidates is not None and created_n < candidates:
             rows.append(Row(name, "", WARN,
                             f"kreirano {created_n}/{candidates} (ostalo preskoceno: X/postoji/custom bez templatea)"))
+        if _EDU_RE.search(res.stdout):
+            rows.append(Row(name, "", WARN,
+                            "educational stamp detektiran u crtezu — PDF-ovi ce nositi vodeni zig, provjeri rucno"))
         return rows
 
     except Exception as exc:  # noqa: BLE001 - zadnja linija obrane; original netaknut
