@@ -11,6 +11,11 @@
          alias, no SendStringToExecute regen). -->
     <DefineConstants>$(DefineConstants);CORECONSOLE</DefineConstants>
     <AcadDir Condition="'$(AcadDir)'==''">C:\Program Files\Autodesk\AutoCAD 2025\</AcadDir>
+    <!-- AutoCAD DLLs are built against different System.Drawing/WindowsBase/
+         Microsoft.VisualBasic versions than the net8 ref pack. We neither call
+         those APIs nor ship them (Private=False; AutoCAD provides them in-proc),
+         so demote the harmless version-unification warnings to messages. -->
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
   </PropertyGroup>
 
   <ItemGroup>
