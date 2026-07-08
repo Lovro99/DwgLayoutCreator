@@ -28,11 +28,17 @@ TIMEOUT_S = 180
 # krivo interpretirati ne-ASCII znakove ovisno o codepageu.
 SCR_CREATE = f'(command "._-LAYOUT" "_New" "{LAYOUT_NAME}")\n._QSAVE\n'
 
-# Pass 2: ispisi (layoutlist) u tekstualnu datoteku — cisti AutoLISP,
-# bez ActiveX-a (vla-*/vlax-* NE rade u accoreconsole!).
+# Pass 2: ispisi imena layouta u tekstualnu datoteku — cisti entity-AutoLISP.
+# VAZNO (nauceno u Koraku 0): (layoutlist) NE postoji u accoreconsole core
+# konzoli ("; error: no function definition: LAYOUTLIST") — ta se funkcija
+# definira tek u punom AutoCAD startup LISP-u. Isto vrijedi za ActiveX
+# (vla-*/vlax-*). Zato imena citamo iz ACAD_LAYOUT rjecnika preko
+# namedobjdict/dictsearch (osnovni AutoLISP, radi u core konzoli).
+# U DXF podacima rjecnika svaki unos ima par (3 . "ime layouta").
 SCR_VERIFY = (
     '(setq f (open "{out}" "w"))\n'
-    "(foreach l (layoutlist) (write-line l f))\n"
+    '(setq d (dictsearch (namedobjdict) "ACAD_LAYOUT"))\n'
+    "(foreach pair d (if (= 3 (car pair)) (write-line (cdr pair) f)))\n"
     "(close f)\n"
 )
 
