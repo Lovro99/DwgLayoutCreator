@@ -107,24 +107,26 @@ def is_writable(dwg: Path) -> bool:
 
 
 def build_commands(steps: "Steps") -> list[str]:
-    """Slozi listu naredbi za create-pass .scr, TOCNO ukljucenim koracima i
-    ovim redom (plan §3). UPDATEFIELD ide NAKON svih izmjena (samo ako polja).
-    Zadnji je ._QSAVE. Export se NE radi u AutoCAD-u (radi ga Python)."""
+    """Slozi listu naredbi za create-pass .scr, TOCNO ukljucenim koracima.
+    Zadnji je ._QSAVE. Export se NE radi u AutoCAD-u (radi ga Python).
+
+    VAZNO (nauceno iz logova):
+      - SETFIELDSBATCH (upis u SummaryInfo) ide POSLJEDNJI od izmjena, tik prije
+        QSAVE — da nista ne stoji izmedju upisa headera i spremanja.
+      - NEMA _.UPDATEFIELD: ta komanda NE postoji u accoreconsole core konzoli
+        ("Unknown command"), a njen neuspjeh + mis-parsani '_All' su stajali
+        izmedju SummaryInfo upisa i QSAVE-a i lomili spremanje. FIELD objekti se
+        ionako reevaluiraju kad korisnik otvori crtez (FIELDEVAL open-time),
+        pa je bitno samo da custom properties opstanu."""
     cmds: list[str] = []
     if steps.layouti:
         cmds.append("CREATELAYOUTBATCH")
-    if steps.polja:
-        cmds.append("SETFIELDSBATCH")
     if steps.naslovi:
         cmds.append("SETTITLESBATCH")
     if steps.sortiranje:
         cmds.append("SORTTABSBATCH")
     if steps.polja:
-        # _.UPDATEFIELD _All  + prazna linija (kraj selekcije) — vjeran ekvivalent
-        # (command "_.UPDATEFIELD" "_All" "") iz SetFieldsValue.lsp.
-        cmds.append("_.UPDATEFIELD")
-        cmds.append("_All")
-        cmds.append("")
+        cmds.append("SETFIELDSBATCH")   # header/SummaryInfo upis POSLJEDNJI
     cmds.append("._QSAVE")
     return cmds
 
@@ -428,7 +430,10 @@ def verify_checks(steps: Steps, created: list[str], polja: dict[str, str],
         for k, v in polja.items():
             if k not in vprops:
                 errs.append(f"polja: kljuc '{k}' nije upisan")
-            elif vprops[k] != v:
+            elif vprops[k].strip() != v.strip():
+                # AutoCAD rezuce zavrsne razmake u custom property vrijednostima;
+                # usporedujemo trim-ano da to ne bude lazni mismatch. Sadrzajna
+                # razlika (drugaciji tekst) svejedno padne -> original netaknut.
                 errs.append(f"polja: '{k}' = '{vprops[k]}' != poslano '{v}'")
 
     if steps.naslovi:

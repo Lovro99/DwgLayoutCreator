@@ -90,7 +90,7 @@ Sve o samim layoutima (format papira, broj, položaj) čita se iz **blokova u DW
 | Korak | Komanda / izvršitelj | Port LISP-a | Što radi |
 |---|---|---|---|
 | `layouti` | `CREATELAYOUTBATCH` | `createlayoutV2.lsp` | Kreira layoute iz blokova u model spaceu (kao dosad). |
-| `polja` | `SETFIELDSBATCH` + `UPDATEFIELD _All` | `SetFieldsValue.lsp` | Custom drawing properties iz Excela (`Podaci`): postojeći ključ prepiši, novi dodaj; pa osvježi FIELD-ove. |
+| `polja` | `SETFIELDSBATCH` | `SetFieldsValue.lsp` | Custom drawing properties iz Excela (`Podaci`): postojeći ključ prepiši, novi dodaj. FIELD-ovi u crtežu se osvježe kad korisnik otvori DWG (open-time `FIELDEVAL`) — `UPDATEFIELD` ne postoji u core konzoli pa se ne šalje. |
 | `naslovi` | `SETTITLESBATCH` | `SetLayoutTitles.lsp` | Za svaki red `Nacrti` sheeta upiše `layout_title`/`layout_mjerilo` u prvi `sastAu` blok tog layouta. |
 | `sortiranje` | `SORTTABSBATCH` | `TabSortV2-2` jezgra + `ele:layout<` | Tabovi imena `broj-brojxbroj` numerički (prvi pa drugi broj); ostali iza njih. |
 | `export` | Python (nakon verifyja) | `ExportLayoutsToExcel.lsp` | Sortirana valjana imena u stupac A `Nacrti` sheeta (retci ispod N se NE brišu — kao LISP). |
@@ -149,7 +149,7 @@ i dalje dijele isti `config.json`.
 | `zaključana (.dwl/.dwl2)` | DWG otvoren u AutoCAD-u — zatvori ga pa ponovi (batch ga preskače, original netaknut). |
 | `sastAu.dwg nedostupan` | Kriva `sastavnica` putanja u configu. |
 | Krivi papir / margine | Provjeri `DWG To PDF.pc3` + PMP preko `LISTMEDIA`; `PageSetupConfigurator` radi 4-razinsko matchanje canonical media imena. |
-| `UPDATEFIELD` javlja *Unknown command* u logu | Core konzola bez te komande — bezopasno (WARN): FIELD-ovi se ionako reevaluiraju pri otvaranju/plotu (REGEN). Javi ako se pojavi, da se doda REGEN fallback u `.scr`. |
+| FIELD-ovi u naslovnom bloku ne pokazuju nove vrijednosti | `UPDATEFIELD` se namjerno više ne šalje (ne postoji u core konzoli). FIELD-ovi se osvježe kad otvoriš DWG u AutoCAD-u (open-time `FIELDEVAL`) — bitno je samo da custom properties postoje (`DWGPROPS`). |
 | `xls nije podrzan` | Stari binarni `.xls` — spremi kao `.xlsx`/`.xlsm`. |
 | `export u Excel nije uspio` (PermissionError) | Excel datoteka otvorena u Excelu — zatvori ju pa ponovi samo `export` korak (DWG izmjene su već valjane). |
 | `TITLES\|noblock\|…` | Layout nema `sastAu` blok ili blok nema tagove `layout_title`/`layout_mjerilo`. |

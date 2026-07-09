@@ -41,6 +41,12 @@ public class SetFieldsBatchCommand
         //   - self-verify u ISTOJ sesiji (present=P/Q) da odmah znamo je li upis
         //     uopce "sjeo" prije spremanja — ako je P=Q ovdje a VPROP prazan u
         //     verify passu, onda je rijec o problemu SPREMANJA, ne upisa.
+        // Postavi radnu bazu na nasu za trajanje upisa — SETTITLESBATCH (cije se
+        // izmjene POUZDANO spremaju) isto to radi; SummaryInfo upis se u nekim
+        // core-console kontekstima ne serijalizira ako radna baza nije nasa.
+        Database? prevWdb = HostApplicationServices.WorkingDatabase;
+        HostApplicationServices.WorkingDatabase = db;
+
         int added = 0, overwritten = 0, failed = 0, present = 0;
         try
         {
@@ -80,6 +86,10 @@ public class SetFieldsBatchCommand
         catch (System.Exception ex)
         {
             ed.WriteMessage($"\nERR| fields: {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            HostApplicationServices.WorkingDatabase = prevWdb;
         }
 
         // Prosireni RESULT (orkestrator i dalje parsira added/overwritten; failed/
