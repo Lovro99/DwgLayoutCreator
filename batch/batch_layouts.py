@@ -60,7 +60,9 @@ OK, WARN, ERR = "OK", "WARN", "ERR"
 # --- markeri iz create passa ---
 _RESULT_RE = re.compile(r"RESULT\|\s*created=(\d+)\s+candidates=(\d+)")
 _CREATED_RE = re.compile(r"^\s*CREATED\|\s*(.+?)\s*$", re.MULTILINE)
-_RESULT_FIELDS_RE = re.compile(r"RESULT\|fields\|added=(\d+)\s+overwritten=(\d+)")
+_RESULT_FIELDS_RE = re.compile(
+    r"RESULT\|fields\|added=(\d+)\s+overwritten=(\d+)"
+    r"(?:\s+failed=(\d+))?(?:\s+present=(\d+)/(\d+))?")
 _RESULT_TITLES_RE = re.compile(r"RESULT\|titles\|ok=(\d+)\s+noblock=(\d+)\s+nolayout=(\d+)")
 _RESULT_SORT_RE = re.compile(r"RESULT\|sorttabs\|sorted=(\d+)\s+other=(\d+)")
 _TITLES_OK_RE = re.compile(r"^\s*TITLES\|ok\|(.*?)\s*$", re.MULTILINE)
@@ -630,8 +632,11 @@ def process_file(cfg: Config, project: Project, log: logging.Logger,
             titles_ok = _TITLES_OK_RE.findall(create_stdout)
             errs = verify_checks(eff, created, polja, naslovi, titles_ok, vlayouts, vprops, vtitles)
             if errs:
-                log.warning("[%s] verify FAIL:\n  %s\n--- verify stdout ---\n%s",
-                            name, "\n  ".join(errs), vres.stdout[-2000:])
+                # Dumpaj I create stdout — tamo su ERR| iz komandi (npr. SETFIELDSBATCH)
+                # i RESULT|...|present=... dijagnostika; verify stdout sam ne pokazuje
+                # ZASTO korak nije prosao.
+                log.warning("[%s] verify FAIL:\n  %s\n--- create stdout ---\n%s\n--- verify stdout ---\n%s",
+                            name, "\n  ".join(errs), create_stdout[-2500:], vres.stdout[-2000:])
                 return rows + [Row(name, "verify", "", ERR,
                                    "verify FAIL: " + "; ".join(errs) + " — original netaknut")]
 
@@ -679,8 +684,16 @@ def build_step_rows(name: str, eff: Steps, created: list[str], created_n: int | 
     if eff.polja:
         fm = _RESULT_FIELDS_RE.search(stdout)
         if fm:
-            rows.append(Row(name, "polja", "", OK,
-                            f"polja: dodano {fm.group(1)}, prepisano {fm.group(2)}"))
+            added, over, failed, present, total = fm.groups()
+            msg = f"polja: dodano {added}, prepisano {over}"
+            status = OK
+            if failed and int(failed) > 0:
+                status = WARN
+                msg += f", NEUSPJELO {failed} (v. ERR| fields u logu)"
+            if present is not None and total is not None and present != total:
+                status = WARN
+                msg += f", upisano {present}/{total} u SummaryInfo"
+            rows.append(Row(name, "polja", "", status, msg))
         else:
             rows.append(Row(name, "polja", "", WARN, "nema RESULT|fields| u ispisu"))
 

@@ -32,27 +32,60 @@ public class SetFieldsBatchCommand
         }
 
         // Mehanika iz plana §4.1: DatabaseSummaryInfoBuilder -> CustomPropertyTable
-        // -> db.SummaryInfo.
-        var builder = new DatabaseSummaryInfoBuilder(db.SummaryInfo);
-        System.Collections.IDictionary table = builder.CustomPropertyTable;
-
-        int added = 0, overwritten = 0;
-        foreach (var kv in data.Polja)
+        // -> db.SummaryInfo. VAZNO: cijeli upis mora doseci db.SummaryIntfo cak i
+        // ako pojedini kljuc baci — inace jedna losa iznimka tiho ponisti SVE
+        // (uzrok bug-a: SETFIELDSBATCH bi pukao prije db.SummaryInfo pa se nista
+        // ne spremi, a accoreconsole samo predje na sljedecu komandu). Zato:
+        //   - po-kljuc try/catch (jedan los kljuc ne rusi ostatak),
+        //   - vanjski try/catch (setter/getter iznimke se vide kao ERR|, ne tiho),
+        //   - self-verify u ISTOJ sesiji (present=P/Q) da odmah znamo je li upis
+        //     uopce "sjeo" prije spremanja — ako je P=Q ovdje a VPROP prazan u
+        //     verify passu, onda je rijec o problemu SPREMANJA, ne upisa.
+        int added = 0, overwritten = 0, failed = 0, present = 0;
+        try
         {
-            if (table.Contains(kv.Key))
-            {
-                table[kv.Key] = kv.Value;
-                overwritten++;
-            }
-            else
-            {
-                table.Add(kv.Key, kv.Value);
-                added++;
-            }
-        }
-        db.SummaryInfo = builder.ToDatabaseSummaryInfo();
+            var builder = new DatabaseSummaryInfoBuilder(db.SummaryInfo);
+            System.Collections.IDictionary table = builder.CustomPropertyTable;
 
-        // Sazetak (po retku nista — prebucno; VERIFYBATCH ionako dumpa VPROP|).
-        ed.WriteMessage($"\nRESULT|fields|added={added} overwritten={overwritten}");
+            foreach (var kv in data.Polja)
+            {
+                try
+                {
+                    if (table.Contains(kv.Key))
+                    {
+                        table[kv.Key] = kv.Value;
+                        overwritten++;
+                    }
+                    else
+                    {
+                        table.Add(kv.Key, kv.Value);
+                        added++;
+                    }
+                }
+                catch (System.Exception exKey)
+                {
+                    failed++;
+                    ed.WriteMessage($"\nERR| fields: kljuc '{kv.Key}': {exKey.Message}");
+                }
+            }
+
+            db.SummaryInfo = builder.ToDatabaseSummaryInfo();
+
+            // Self-verify: ponovno procitaj SummaryInfo i prebroji koliko je kljuceva
+            // stvarno prisutno (u istoj sesiji, prije spremanja).
+            var check = new DatabaseSummaryInfoBuilder(db.SummaryInfo).CustomPropertyTable;
+            foreach (var kv in data.Polja)
+                if (check.Contains(kv.Key)) present++;
+        }
+        catch (System.Exception ex)
+        {
+            ed.WriteMessage($"\nERR| fields: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        // Prosireni RESULT (orkestrator i dalje parsira added/overwritten; failed/
+        // present su dijagnostika). Ako je present < ukupno, upis nije "sjeo".
+        ed.WriteMessage(
+            $"\nRESULT|fields|added={added} overwritten={overwritten} " +
+            $"failed={failed} present={present}/{data.Polja.Count}");
     }
 }

@@ -154,6 +154,7 @@ i dalje dijele isti `config.json`.
 | `export u Excel nije uspio` (PermissionError) | Excel datoteka otvorena u Excelu — zatvori ju pa ponovi samo `export` korak (DWG izmjene su već valjane). |
 | `TITLES\|noblock\|…` | Layout nema `sastAu` blok ili blok nema tagove `layout_title`/`layout_mjerilo`. |
 | `TITLES\|nolayout\|…` | Ime layouta u `Nacrti` sheetu ne postoji u DWG-u (tipfeler ili layout još nije kreiran). |
+| **polja se ne upišu** (`verify FAIL: polja: kljuc … nije upisan`) | U `run_*.log` je sad i *create stdout*: pogledaj `RESULT\|fields\|added=… present=P/Q` i eventualne `ERR\| fields:` linije. `present<Q` = upis nije "sjeo" ni u sesiji (iznimka na setteru — vidi `ERR\|`); `present=Q` a `VPROP` prazan = problem spremanja (javi log). |
 
 ---
 
