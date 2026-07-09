@@ -154,22 +154,25 @@ class PassResult:
     returncode: int
     stdout: str
     timed_out: bool
+    aborted: bool = False
 
 
-def run_accore(cfg: Config, dwg: Path, scr: Path, env: dict, on_line=None) -> PassResult:
-    """Pokreni accoreconsole. Ako je on_line zadan, streamaj stdout uzivo i zovi
-    on_line(line) za svaku dovrsenu liniju (za live progress). Inace jednostavno
-    uhvati cijeli izlaz na kraju."""
+def run_accore(cfg: Config, dwg: Path, scr: Path, env: dict,
+               on_line=None, should_abort=None) -> PassResult:
+    """Pokreni accoreconsole. Ako je on_line ILI should_abort zadan, streamaj
+    stdout (citac thread) da mozemo uzivo emitirati linije (on_line) i/ili
+    prekinuti proces (should_abort() -> kill). Inace jednostavno uhvati cijeli
+    izlaz na kraju (subprocess.run)."""
     cmd = [str(cfg.accoreconsole), "/i", str(dwg), "/s", str(scr), "/l", cfg.lang]
 
-    if on_line is None:
+    if on_line is None and should_abort is None:
         try:
             proc = subprocess.run(cmd, capture_output=True, timeout=cfg.timeout_s, env=env)
             return PassResult(proc.returncode, decode_accore(proc.stdout), False)
         except subprocess.TimeoutExpired as exc:
             return PassResult(-1, decode_accore(exc.stdout or b""), True)
 
-    # streaming put: citac u thread-u puni buffer, glavni thread emitira nove linije
+    # streaming put: citac u thread-u puni buffer, glavni thread emitira/prekida
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     raw = bytearray()
     lock = threading.Lock()
@@ -192,24 +195,31 @@ def run_accore(cfg: Config, dwg: Path, scr: Path, env: dict, on_line=None) -> Pa
     start = time.monotonic()
     emitted = 0
     timed_out = False
+    aborted = False
     while proc.poll() is None:
+        if should_abort is not None and should_abort():
+            proc.kill()
+            aborted = True
+            break
         if time.monotonic() - start > cfg.timeout_s:
             proc.kill()
             timed_out = True
             break
         time.sleep(0.4)
-        complete = snapshot_lines()[:-1]  # zadnja je mozda nedovrsena
-        for line in complete[emitted:]:
-            on_line(line)
-        emitted = len(complete)
+        if on_line is not None:
+            complete = snapshot_lines()[:-1]  # zadnja je mozda nedovrsena
+            for line in complete[emitted:]:
+                on_line(line)
+            emitted = len(complete)
 
     th.join(timeout=2)
-    for line in snapshot_lines()[emitted:]:  # zavrsni flush
-        on_line(line)
+    if on_line is not None:
+        for line in snapshot_lines()[emitted:]:  # zavrsni flush
+            on_line(line)
     with lock:
         text = decode_accore(bytes(raw))
     rc = proc.returncode if proc.returncode is not None else -1
-    return PassResult(rc, text, timed_out)
+    return PassResult(rc, text, timed_out, aborted)
 
 
 def parse_create(stdout: str) -> tuple[list[str], int | None, int | None]:
@@ -233,27 +243,18 @@ class Row:
     poruka: str
 
 
-def make_progress_printer(name: str):
-    """Vraca on_line callback koji ispisuje 'X/N layouta' u istoj liniji (\\r)."""
-    state = {"done": 0, "total": None}
-
-    def on_line(line: str) -> None:
-        fm = _FOUND_RE.search(line)
-        if fm:
-            state["total"] = int(fm.group(1))
-        dm = _DONE_RE.search(line)
-        if dm:
-            state["done"] += 1
-            tot = f"/{state['total']}" if state["total"] else ""
-            sys.stdout.write(f"\r    {name}: {state['done']}{tot} layouta  ({dm.group(1)})        ")
-            sys.stdout.flush()
-
-    return on_line
-
-
-def process_file(cfg: Config, dwg: Path, log: logging.Logger, live: bool = False) -> list[Row]:
+def process_file(cfg: Config, dwg: Path, log: logging.Logger,
+                 on_line=None, on_progress=None, should_abort=None) -> list[Row]:
+    """Obradi jednu datoteku. NE pise po sys.stdout; sav napredak ide kroz
+    callbackove (CLI i GUI ih dobavljaju):
+      on_line(str)                    — svaka sirova linija create-pass ispisa,
+      on_progress(done, total, name)  — kad je layout gotov ([5/5] iz plugina),
+      should_abort() -> bool          — ako vrati True, tekuci proces se ubija.
+    Semantika kopija->create->verify->zamjena je NEPROMIJENJENA."""
     name = dwg.name
 
+    if should_abort is not None and should_abort():
+        return [Row(name, "", ERR, "preskoceno (prekid prije obrade)")]
     if not dwg.is_file():
         return [Row(name, "", ERR, "datoteka ne postoji")]
     if is_locked(dwg):
@@ -276,13 +277,29 @@ def process_file(cfg: Config, dwg: Path, log: logging.Logger, live: bool = False
                             __DLL_PATH__=lisp_path(cfg.plugin_dll)),
             encoding="ascii",
         )
-        on_line = make_progress_printer(name) if live else None
-        res = run_accore(cfg, copy, create_scr, env, on_line=on_line)
-        if live:
-            sys.stdout.write("\n")  # zatvori \r progres liniju
-            sys.stdout.flush()
+        # objedinjeni handler: parsira progres (Found N, [5/5] Done) i prosljedjuje
+        line_handler = None
+        if on_line is not None or on_progress is not None:
+            pstate = {"done": 0, "total": None}
+
+            def line_handler(line: str, _s=pstate) -> None:
+                fm = _FOUND_RE.search(line)
+                if fm:
+                    _s["total"] = int(fm.group(1))
+                dm = _DONE_RE.search(line)
+                if dm:
+                    _s["done"] += 1
+                    if on_progress is not None:
+                        on_progress(_s["done"], _s["total"], dm.group(1))
+                if on_line is not None:
+                    on_line(line)
+
+        res = run_accore(cfg, copy, create_scr, env,
+                         on_line=line_handler, should_abort=should_abort)
         log.info("[%s] create exit=%s timeout=%s", name, res.returncode, res.timed_out)
 
+        if res.aborted:
+            return [Row(name, "", ERR, "prekinuto — original netaknut")]
         if res.timed_out:
             log.warning("[%s] create stdout (zadnjih 2000 zn.):\n%s", name, res.stdout[-2000:])
             return [Row(name, "", ERR, f"timeout > {cfg.timeout_s}s — original netaknut")]
@@ -317,9 +334,11 @@ def process_file(cfg: Config, dwg: Path, log: logging.Logger, live: bool = False
                             __OUT_PATH__=lisp_path(out_txt)),
             encoding="ascii",
         )
-        vres = run_accore(cfg, copy, verify_scr, env)
+        vres = run_accore(cfg, copy, verify_scr, env, should_abort=should_abort)
         log.info("[%s] verify exit=%s", name, vres.returncode)
 
+        if vres.aborted:
+            return [Row(name, "", ERR, "prekinuto tijekom verifikacije — original netaknut")]
         if not out_txt.exists():
             return [Row(name, "", ERR, "verify pass nije zapisao layouts.txt — original netaknut")]
         persisted = set(out_txt.read_text(encoding="utf-8", errors="replace").split("\n"))
@@ -374,18 +393,38 @@ def preflight(cfg: Config) -> None:
         sys.exit("PREFLIGHT greske:\n  - " + "\n  - ".join(problems))
 
 
-def setup_logging(ts: str) -> logging.Logger:
+def setup_logging(ts: str, to_stdout: bool = True) -> logging.Logger:
+    """Logger s file handlerom (run_<ts>.log). CLI dodaje i stdout handler;
+    GUI ga izostavi (pythonw nema konzolu) i sam prikaci svoj queue handler."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log = logging.getLogger("batch_layouts")
     log.setLevel(logging.INFO)
     log.handlers.clear()
     fh = logging.FileHandler(LOG_DIR / f"run_{ts}.log", encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setFormatter(logging.Formatter("%(message)s"))
     log.addHandler(fh)
-    log.addHandler(ch)
+    if to_stdout and sys.stdout is not None:
+        ch = logging.StreamHandler(sys.stdout)
+        ch.setFormatter(logging.Formatter("%(message)s"))
+        log.addHandler(ch)
     return log
+
+
+def run_log_path(ts: str) -> Path:
+    return LOG_DIR / f"run_{ts}.log"
+
+
+def read_config_raw(path: Path) -> dict:
+    """Ucitaj config.json kao dict (za GUI). Isti format koji cita load_config."""
+    with path.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def write_config(path: Path, data: dict) -> None:
+    """Spremi config.json (za GUI) u isti format koji cita CLI load_config."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, ensure_ascii=False)
 
 
 def write_csv(ts: str, rows: list[Row]) -> Path:
@@ -451,7 +490,15 @@ def main() -> None:
     else:
         for i, p in enumerate(cfg.projekti, 1):
             log.info("[%d/%d] %s — kreiram layoute...", i, total, p.name)
-            all_rows.extend(process_file(cfg, p, log, live=True))
+
+            def cli_progress(done: int, tot, layout: str, _n=p.name) -> None:
+                t = f"/{tot}" if tot else ""
+                sys.stdout.write(f"\r    {_n}: {done}{t} layouta  ({layout})        ")
+                sys.stdout.flush()
+
+            all_rows.extend(process_file(cfg, p, log, on_progress=cli_progress))
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
     csv_path = write_csv(ts, all_rows)
 

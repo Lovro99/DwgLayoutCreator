@@ -10,3 +10,4 @@ batch/logs/*.log
 batch/logs/*.csv
 __pycache__/
 *.pyc
+batch/.batch_gui_state.json

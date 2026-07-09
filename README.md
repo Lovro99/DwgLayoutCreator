@@ -68,7 +68,15 @@ Rezultat: `bin\Release\net8.0-windows\LayoutCreatorCore.dll`.
 Sve o samim layoutima (format papira, broj, položaj) čita se iz **blokova u DWG-u**
 (`A4L…A0P`/`CUSTOM1-8` + atribut broja `BR_N` ili zadnji atribut) — config to ne duplicira.
 
-### 3. Pokretanje
+### 3. Pokretanje — GUI ili CLI
+
+**GUI** (bez ručnog editiranja configa) — `python batch\batch_gui.py` (ili launcher
+`Batch Layouti.bat`): odabir DWG-ova (gumbi / folder + pattern) sa statusom
+(postoji/zaključan/read-only), Browse za alate, Učitaj/Spremi **isti** `config.json`,
+gumbi Pokreni / Dry-run / Prekini, live log + progress bar + Otvori CSV/log.
+GUI i CLI dijele isti config format.
+
+**CLI**:
 ```
 python batch\batch_layouts.py --config batch\config.json --dry-run   # samo ispiši što bi radio
 python batch\batch_layouts.py --config batch\config.json             # stvarno
@@ -122,7 +130,8 @@ dotnet build LayoutCrator\LayoutCreator\LayoutCreator.csproj -c Release
 DwgLayoutCreator/
 ├── IMPLEMENTACIJA_PLAN.md          # dijagnoza, odabir pristupa, koraci
 ├── batch/                          # Python orkestrator (headless batch)
-│   ├── batch_layouts.py
+│   ├── batch_layouts.py            # CLI + logika obrade (importabilan modul)
+│   ├── batch_gui.py                # tkinter GUI (dijeli config s CLI-jem)
 │   ├── config.json                 # primjer
 │   ├── templates/
 │   │   ├── create_layouts.scr.tpl
