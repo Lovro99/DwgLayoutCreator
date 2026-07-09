@@ -72,7 +72,8 @@ class BatchGUI:
         root.geometry("880x720")
         root.minsize(760, 600)
 
-        self.files: list[Path] = []
+        # projekti kao core.Project (cuva i per-projektni excel iz configa)
+        self.files: list[core.Project] = []
         self.q: "queue.Queue" = queue.Queue()
         self.abort = threading.Event()
         self.worker: threading.Thread | None = None
@@ -87,6 +88,16 @@ class BatchGUI:
         self.var_backup = tk.BooleanVar(value=True)
         self.var_pattern = tk.StringVar(value=DEFAULT_PATTERN)
         self.var_lang = "en-US"
+
+        # koraci (plan V2) — layouti default ON, ostali OFF (staro ponasanje)
+        self.var_k_layouti = tk.BooleanVar(value=True)
+        self.var_k_polja = tk.BooleanVar(value=False)
+        self.var_k_naslovi = tk.BooleanVar(value=False)
+        self.var_k_sortiranje = tk.BooleanVar(value=False)
+        self.var_k_export = tk.BooleanVar(value=False)
+        self.var_excel = tk.StringVar()
+        self.var_sheet_polja = tk.StringVar(value="Podaci")
+        self.var_sheet_nacrti = tk.StringVar(value="Nacrti")
 
         self._build_ui()
         self._load_initial_config()
@@ -117,6 +128,27 @@ class BatchGUI:
         ttk.Button(opts, text="Učitaj config…", command=self._load_config_dialog).pack(side="left", padx=3)
         ttk.Button(opts, text="Spremi config…", command=self._save_config_dialog).pack(side="left", padx=3)
 
+        # Koraci (plan V2) + Excel
+        fk = ttk.LabelFrame(self.root, text="Koraci")
+        fk.pack(fill="x", padx=8, pady=4)
+        fk.columnconfigure(1, weight=1)
+
+        kbar = ttk.Frame(fk)
+        kbar.grid(row=0, column=0, columnspan=3, sticky="w", padx=6, pady=3)
+        ttk.Checkbutton(kbar, text="layouti", variable=self.var_k_layouti).pack(side="left", padx=(0, 10))
+        ttk.Checkbutton(kbar, text="polja (Excel→DWG)", variable=self.var_k_polja).pack(side="left", padx=(0, 10))
+        ttk.Checkbutton(kbar, text="naslovi (Excel→sastAu)", variable=self.var_k_naslovi).pack(side="left", padx=(0, 10))
+        ttk.Checkbutton(kbar, text="sortiranje tabova", variable=self.var_k_sortiranje).pack(side="left", padx=(0, 10))
+        ttk.Checkbutton(kbar, text="export (DWG→Excel)", variable=self.var_k_export).pack(side="left")
+
+        self._path_row(fk, 1, "Excel datoteka:", self.var_excel, self._browse_excel)
+        sheets = ttk.Frame(fk)
+        sheets.grid(row=2, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
+        ttk.Label(sheets, text="sheet polja:").pack(side="left")
+        ttk.Entry(sheets, textvariable=self.var_sheet_polja, width=14).pack(side="left", padx=(3, 14))
+        ttk.Label(sheets, text="sheet nacrti:").pack(side="left")
+        ttk.Entry(sheets, textvariable=self.var_sheet_nacrti, width=14).pack(side="left", padx=3)
+
         # DWG projekti
         fd = ttk.LabelFrame(self.root, text="DWG projekti")
         fd.pack(fill="both", expand=True, padx=8, pady=4)
@@ -130,12 +162,14 @@ class BatchGUI:
         ttk.Button(bar, text="Ukloni", command=self._remove_selected).pack(side="right", padx=3)
         ttk.Button(bar, text="Očisti", command=self._clear_files).pack(side="right", padx=3)
 
-        cols = ("status",)
+        cols = ("status", "excel")
         self.tree = ttk.Treeview(fd, columns=cols, show="tree headings", height=8, selectmode="extended")
         self.tree.heading("#0", text="datoteka")
         self.tree.heading("status", text="status")
-        self.tree.column("#0", width=560)
-        self.tree.column("status", width=110, anchor="center")
+        self.tree.heading("excel", text="excel (po projektu)")
+        self.tree.column("#0", width=440)
+        self.tree.column("status", width=100, anchor="center")
+        self.tree.column("excel", width=180)
         self.tree.pack(fill="both", expand=True, padx=6, pady=(0, 6))
 
         # Akcije
@@ -201,16 +235,16 @@ class BatchGUI:
         self._add_paths(found)
 
     def _add_paths(self, paths) -> None:
-        existing = {str(p) for p in self.files}
+        existing = {str(pr.dwg) for pr in self.files}
         for p in paths:
             if p.suffix.lower() == ".dwg" and str(p) not in existing:
-                self.files.append(p)
+                self.files.append(core.Project(p))
                 existing.add(str(p))
         self._refresh_tree()
 
     def _remove_selected(self) -> None:
         sel = set(self.tree.selection())
-        self.files = [p for iid, p in zip(self._iids(), self.files) if iid not in sel]
+        self.files = [pr for iid, pr in zip(self._iids(), self.files) if iid not in sel]
         self._refresh_tree()
 
     def _clear_files(self) -> None:
@@ -222,8 +256,10 @@ class BatchGUI:
 
     def _refresh_tree(self) -> None:
         self.tree.delete(*self.tree.get_children())
-        for p in self.files:
-            self.tree.insert("", "end", text=str(p), values=(file_status(p),))
+        for pr in self.files:
+            self.tree.insert("", "end", text=str(pr.dwg),
+                             values=(file_status(pr.dwg),
+                                     str(pr.excel) if pr.excel else ""))
 
     # ---- browse ----
     def _browse_accore(self) -> None:
@@ -243,6 +279,12 @@ class BatchGUI:
                                        filetypes=[("AutoCAD DWG", "*.dwg"), ("Sve", "*.*")])
         if p:
             self.var_sast.set(p)
+
+    def _browse_excel(self) -> None:
+        p = filedialog.askopenfilename(title="Excel datoteka",
+                                       filetypes=[("Excel", "*.xlsx *.xlsm"), ("Sve", "*.*")])
+        if p:
+            self.var_excel.set(p)
 
     # ---- config load/save (isti format kao CLI) ----
     def _load_initial_config(self) -> None:
@@ -289,21 +331,38 @@ class BatchGUI:
         self.var_lang = str(raw.get("lang", "en-US"))
         if raw.get("pattern"):
             self.var_pattern.set(str(raw["pattern"]))
-        # projekti / folder+pattern
-        self.files = []
-        if raw.get("projekti"):
-            self.files = [Path(p) for p in raw["projekti"] if str(p).lower().endswith(".dwg")]
-        elif raw.get("folder"):
-            pat = raw.get("pattern", DEFAULT_PATTERN)
-            self.files = [p for p in sorted(Path(raw["folder"]).glob(pat)) if p.suffix.lower() == ".dwg"]
+
+        # koraci + excel (plan V2); stari config bez ovih polja -> defaulti
+        steps = core.parse_steps(raw.get("koraci"))
+        self.var_k_layouti.set(steps.layouti)
+        self.var_k_polja.set(steps.polja)
+        self.var_k_naslovi.set(steps.naslovi)
+        self.var_k_sortiranje.set(steps.sortiranje)
+        self.var_k_export.set(steps.export)
+        self.var_excel.set(str(raw.get("excel", "") or ""))
+        self.var_sheet_polja.set(str(raw.get("sheet_polja", "Podaci")))
+        self.var_sheet_nacrti.set(str(raw.get("sheet_nacrti", "Nacrti")))
+
+        # projekti / folder+pattern — isti parser kao CLI (string ILI {dwg, excel})
+        self.files = core.resolve_projects(raw, path) if (raw.get("projekti") or raw.get("folder")) else []
         self._refresh_tree()
         self._remember_config(path)
         if announce:
             self._log(f"Učitan config: {path}  ({len(self.files)} projekata)")
         self.status.config(text=f"Config: {path}")
 
+    def _steps(self) -> "core.Steps":
+        return core.Steps(
+            layouti=bool(self.var_k_layouti.get()),
+            polja=bool(self.var_k_polja.get()),
+            naslovi=bool(self.var_k_naslovi.get()),
+            sortiranje=bool(self.var_k_sortiranje.get()),
+            export=bool(self.var_k_export.get()),
+        )
+
     def _config_dict(self) -> dict:
-        return {
+        s = self._steps()
+        d = {
             "accoreconsole": self.var_accore.get(),
             "plugin_dll": self.var_dll.get(),
             "sastavnica": self.var_sast.get(),
@@ -311,8 +370,18 @@ class BatchGUI:
             "backup": bool(self.var_backup.get()),
             "jobs": int(self.var_jobs.get()),
             "lang": self.var_lang,
-            "projekti": [str(p) for p in self.files],
+            "koraci": {"layouti": s.layouti, "polja": s.polja, "naslovi": s.naslovi,
+                       "sortiranje": s.sortiranje, "export": s.export},
+            "sheet_polja": self.var_sheet_polja.get() or "Podaci",
+            "sheet_nacrti": self.var_sheet_nacrti.get() or "Nacrti",
+            # string za projekte bez vlastitog excela, {dwg, excel} za ostale
+            "projekti": [str(pr.dwg) if pr.excel is None
+                         else {"dwg": str(pr.dwg), "excel": str(pr.excel)}
+                         for pr in self.files],
         }
+        if self.var_excel.get().strip():
+            d["excel"] = self.var_excel.get().strip()
+        return d
 
     def _save_config_dialog(self) -> None:
         p = filedialog.asksaveasfilename(title="Spremi config.json",
@@ -330,9 +399,13 @@ class BatchGUI:
 
     # ---- pokretanje ----
     def _build_config(self) -> core.Config | None:
-        for label, val in (("accoreconsole.exe", self.var_accore.get()),
-                           ("LayoutCreatorCore.dll", self.var_dll.get()),
-                           ("sastAu.dwg", self.var_sast.get())):
+        steps = self._steps()
+        required = [("accoreconsole.exe", self.var_accore.get()),
+                    ("LayoutCreatorCore.dll", self.var_dll.get())]
+        if steps.layouti:
+            # sastavnica je potrebna samo za korak 'layouti' (kao CLI preflight)
+            required.append(("sastAu.dwg", self.var_sast.get()))
+        for label, val in required:
             if not val.strip():
                 messagebox.showwarning("Nedostaje putanja", f"Postavi: {label}")
                 return None
@@ -340,17 +413,32 @@ class BatchGUI:
                 if not messagebox.askyesno("Putanja ne postoji",
                                            f"{label} ne postoji:\n{val}\n\nSvejedno nastavi?"):
                     return None
+        if not any((steps.layouti, steps.polja, steps.naslovi, steps.sortiranje, steps.export)):
+            messagebox.showwarning("Nema koraka", "Uključi barem jedan korak.")
+            return None
+        excel = self.var_excel.get().strip()
+        if (steps.polja or steps.naslovi or steps.export) and not excel \
+                and not any(pr.excel for pr in self.files):
+            messagebox.showwarning(
+                "Nedostaje Excel",
+                "Koraci polja/naslovi/export trebaju Excel datoteku\n"
+                "(globalnu ili po projektu).")
+            return None
         if not self.files:
             messagebox.showwarning("Nema projekata", "Dodaj barem jedan DWG.")
             return None
         return core.Config(
             accoreconsole=Path(self.var_accore.get()),
             plugin_dll=Path(self.var_dll.get()),
-            sastavnica=Path(self.var_sast.get()),
+            sastavnica=Path(self.var_sast.get()) if self.var_sast.get().strip() else Path("sastAu.dwg"),
             timeout_s=int(self.var_timeout.get()),
             backup=bool(self.var_backup.get()),
             jobs=int(self.var_jobs.get()),
             lang=self.var_lang,
+            excel=Path(excel) if excel else None,
+            sheet_polja=self.var_sheet_polja.get() or "Podaci",
+            sheet_nacrti=self.var_sheet_nacrti.get() or "Nacrti",
+            koraci=steps,
             projekti=list(self.files),
         )
 
@@ -370,8 +458,15 @@ class BatchGUI:
 
         if dry_run:
             self._log("\n--- DRY RUN (ništa se ne mijenja) ---")
-            for p in cfg.projekti:
-                self._log(f"  {file_status(p):<10}  {p}")
+            self._log(f"Koraci: {core._steps_summary(cfg.koraci)}")
+            self._log("Create-pass naredbe:")
+            for c in core.build_commands(cfg.koraci):
+                self._log(f"  {c if c else '(prazna linija = kraj selekcije)'}")
+            for pr in cfg.projekti:
+                xls = pr.excel or cfg.excel
+                xnote = f"  excel={xls}" if (cfg.koraci.polja or cfg.koraci.naslovi
+                                             or cfg.koraci.export) else ""
+                self._log(f"  {file_status(pr.dwg):<10}  {pr.dwg}{xnote}")
             self._log("--- kraj dry-run ---")
             return
 
@@ -403,17 +498,18 @@ class BatchGUI:
         all_rows: list[core.Row] = []
         total = len(cfg.projekti)
         try:
-            for i, p in enumerate(cfg.projekti, 1):
+            for i, pr in enumerate(cfg.projekti, 1):
+                name = pr.dwg.name
                 if self.abort.is_set():
-                    self.q.put(("log", f"[{i}/{total}] preskačem (prekid): {p.name}"))
-                    all_rows.append(core.Row(p.name, "", core.ERR, "preskoceno (prekid)"))
+                    self.q.put(("log", f"[{i}/{total}] preskačem (prekid): {name}"))
+                    all_rows.append(core.Row(name, "", "", core.ERR, "preskoceno (prekid)"))
                     continue
-                self.q.put(("log", f"[{i}/{total}] {p.name} — kreiram layoute…"))
+                self.q.put(("log", f"[{i}/{total}] {name} — obrada…"))
 
-                def on_progress(done, tot, layout, _n=p.name):
+                def on_progress(done, tot, layout, _n=name):
                     self.q.put(("prog_layout", _n, done, tot, layout))
 
-                rows = core.process_file(cfg, p, log,
+                rows = core.process_file(cfg, pr, log,
                                          on_progress=on_progress,
                                          should_abort=self.abort.is_set)
                 all_rows.extend(rows)
