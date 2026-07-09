@@ -7,10 +7,24 @@
   "jobs": 1,
   "lang": "en-US",
 
-  "_projekti_komentar": "Navedi ILI 'projekti' (lista punih putanja) ILI 'folder'+'pattern'. JSON nema komentare pa ovo polje ignorira orkestrator.",
+  "_koraci_komentar": "Koji se koraci izvrsavaju po datoteci. Izostavljen 'koraci' = samo layouti (staro ponasanje). polja/naslovi/export trebaju 'excel'.",
+  "koraci": {
+    "layouti": true,
+    "polja": false,
+    "naslovi": false,
+    "sortiranje": false,
+    "export": false
+  },
+
+  "_excel_komentar": "Globalni Excel za korake polja (sheet A=kljuc,B=vrijednost), naslovi (A=layout,B=naslov,C=mjerilo) i export (imena layouta u stupac A). Moze se nadjacati po projektu. Podrzano: .xlsx/.xlsm (bez starog .xls).",
+  "excel": "C:\\Projekti\\zajednicki_podaci.xlsx",
+  "sheet_polja": "Podaci",
+  "sheet_nacrti": "Nacrti",
+
+  "_projekti_komentar": "Navedi ILI 'projekti' (string ILI {dwg, excel}) ILI 'folder'+'pattern'. JSON nema komentare pa ovo polje ignorira orkestrator.",
   "projekti": [
     "C:\\Projekti\\P100\\elektro.dwg",
-    "C:\\Projekti\\P101\\elektro.dwg"
+    { "dwg": "C:\\Projekti\\P101\\elektro.dwg", "excel": "C:\\Projekti\\P101\\podaci.xlsx" }
   ],
 
   "_folder_primjer": "Umjesto 'projekti' moze: \"folder\": \"C:\\\\Projekti\", \"pattern\": \"**/elektro*.dwg\""
