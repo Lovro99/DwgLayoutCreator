@@ -1,3 +1,2 @@
 (command "._NETLOAD" "__DLL_PATH__")
-CREATELAYOUTBATCH
-._QSAVE
+__COMMANDS__
