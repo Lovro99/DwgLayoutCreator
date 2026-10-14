@@ -202,6 +202,95 @@ class TestRoundTrip(unittest.TestCase):
         self.assertIn("redak 4", warns[1])
 
 
+# Dijelovi kakve stvarno zapisuje Excel: mc:Ignorable navodi prefikse kao TEKST,
+# a neki od njih (xr2, xr3) se nigdje drugdje ne koriste.
+_EXCEL_NS = (
+    f'xmlns="{NS_MAIN}" xmlns:r="{NS_REL}" '
+    'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+    'mc:Ignorable="x14ac xr xr2 xr3" '
+    'xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" '
+    'xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision" '
+    'xmlns:xr2="http://schemas.microsoft.com/office/spreadsheetml/2015/revision2" '
+    'xmlns:xr3="http://schemas.microsoft.com/office/spreadsheetml/2016/revision3"'
+)
+
+
+def _excel_like_xlsx():
+    """xlsx s Excelovim namespace deklaracijama u workbooku i sheetu."""
+    sheet = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+             f'<worksheet {_EXCEL_NS} xr:uid="{{00000000-0001-0000-0000-000000000000}}">'
+             '<dimension ref="B1"/>'
+             '<sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25"/>'
+             '<sheetData><row r="1" spans="2:2" x14ac:dyDescent="0.25">'
+             '<c r="B1"><v>5</v></c></row></sheetData></worksheet>')
+    wb = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          f'<workbook {_EXCEL_NS}><sheets>'
+          '<sheet name="Nacrti" sheetId="1" r:id="rId1"/></sheets></workbook>')
+    rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<Relationships xmlns="{NS_PKGREL}">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            '</Relationships>')
+    ct = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          f'<Types xmlns="{NS_CT}">'
+          '<Override PartName="/xl/workbook.xml" ContentType="application/'
+          'vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+          '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/'
+          'vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", ct)
+        zf.writestr("xl/workbook.xml", wb)
+        zf.writestr("xl/_rels/workbook.xml.rels", rels)
+        zf.writestr("xl/worksheets/sheet1.xml", sheet)
+    return buf.getvalue()
+
+
+def _ignorable_prefiksi_deklarirani(xml: bytes) -> list[str]:
+    """Prefiksi iz mc:Ignorable koji NISU deklarirani u korijenu (treba biti [])."""
+    import re
+    root_tag = re.search(rb"<(?![?!])[^>]*>", xml).group(0).decode()
+    m = re.search(r'\bmc:Ignorable="([^"]*)"', root_tag)
+    if not m:
+        return ["<mc:Ignorable nestao ili preimenovan>"]
+    declared = set(re.findall(r"xmlns:([\w.-]+)=", root_tag))
+    return [p for p in m.group(1).split() if p not in declared]
+
+
+class TestExcelNamespaces(unittest.TestCase):
+    """Re-serijalizacija ne smije pokvariti mc:Ignorable (Excel bi trazio repair)."""
+
+    def _write(self, sheet):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "projekt.xlsx")
+            with open(p, "wb") as fh:
+                fh.write(_excel_like_xlsx())
+            xl.write_column_a(p, sheet, ["001", "002"])
+            with zipfile.ZipFile(p) as zf:
+                parts = {n: zf.read(n) for n in zf.namelist()}
+            rows = xl.read_sheet(p, sheet)
+        return parts, rows
+
+    def test_postojeci_sheet_cuva_prefikse(self):
+        parts, rows = self._write("Nacrti")
+        sheet = parts["xl/worksheets/sheet1.xml"]
+        self.assertEqual(_ignorable_prefiksi_deklarirani(sheet), [])
+        self.assertIn(b'x14ac:dyDescent="0.25"', sheet)
+        self.assertIn(b'xr:uid=', sheet)
+        self.assertNotIn(b"ns0:", sheet)
+        self.assertNotIn(b"ns1:", sheet)
+        self.assertEqual(rows[0][:2], ["001", "5"])
+        self.assertEqual(rows[1][0], "002")
+
+    def test_novi_sheet_cuva_prefikse_workbooka(self):
+        parts, rows = self._write("Novi")
+        self.assertEqual(_ignorable_prefiksi_deklarirani(parts["xl/workbook.xml"]), [])
+        self.assertIn(b'r:id="rId2"', parts["xl/workbook.xml"])
+        self.assertNotIn(b"ns0:", parts["xl/_rels/workbook.xml.rels"])
+        self.assertNotIn(b"ns0:", parts["[Content_Types].xml"])
+        self.assertEqual([r[0] for r in rows], ["001", "002"])
+
+
 class TestXlsGuard(unittest.TestCase):
     def test_xls_nije_podrzan(self):
         with self.assertRaises(ValueError):

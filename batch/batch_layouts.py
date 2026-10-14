@@ -646,15 +646,30 @@ def process_file(cfg: Config, project: Project, log: logging.Logger,
                                    "verify FAIL: " + "; ".join(errs) + " — original netaknut")]
 
             # --- uspjeh: zamijeni original (uz .bak) ---
+            # work_dir je u %TEMP%, cesto na drugom disku od projekta (mrezni
+            # disk) - tamo je "move" zapravo kopiranje koje moze puknuti na pola.
+            # Zato se nova verzija PRVO kopira uz original (.novi), i tek kad je
+            # cijela na istom volumenu, os.replace je atomicno zamijeni. Original
+            # ni u jednom trenutku ne nestaje, a finally (rmtree work_dir) ne moze
+            # obrisati jedinu ispravnu kopiju.
+            staged = dwg.with_name(dwg.name + ".novi")
+            try:
+                shutil.copy2(copy, staged)
+            except OSError as exc:
+                try:
+                    staged.unlink()
+                except OSError:
+                    pass
+                return rows + [Row(name, "", "", ERR,
+                                   f"kopiranje nove verzije uz original nije uspjelo: {exc} — original netaknut")]
             try:
                 if cfg.backup:
-                    backup = dwg.with_suffix(dwg.suffix + ".bak")
-                    os.replace(dwg, backup)
-                else:
-                    os.remove(dwg)
-                shutil.move(str(copy), str(dwg))
+                    shutil.copy2(dwg, dwg.with_suffix(dwg.suffix + ".bak"))
+                os.replace(staged, dwg)
             except OSError as exc:
-                return rows + [Row(name, "", "", ERR, f"zamjena originala nije uspjela: {exc} — provjeri .bak")]
+                return rows + [Row(name, "", "", ERR,
+                                   f"zamjena originala nije uspjela: {exc} — original netaknut, "
+                                   f"nova verzija je u {staged.name}")]
 
             rows.extend(build_step_rows(name, eff, created, created_n, candidates, create_stdout))
 

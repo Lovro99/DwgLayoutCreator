@@ -120,8 +120,9 @@ python batch\batch_layouts.py --config batch\config.json --jobs 3    # paralelno
 ```
 Po datoteci: kopija → **create pass** (`NETLOAD` → uključeni koraci → `QSAVE`)
 → **verify pass** (`VERIFYBATCH`, read-only) → usporedbe (layouti / polja /
-naslovi / poredak tabova) → tek onda original → `.bak`, kopija na mjesto
-originala → export u Excel.
+naslovi / poredak tabova) → tek onda se nova verzija kopira uz original
+(`<ime>.dwg.novi`), original se kopira u `.bak` i `.novi` atomično zamijeni
+original (`os.replace`, isti disk) → export u Excel.
 **Ako bilo što pukne (lock, timeout, sastavnica fali, verify FAIL) → original ostaje netaknut.**
 
 Rezultati: `batch/logs/rezultati_<timestamp>.csv` (UTF-8 BOM, `;`-delimited,

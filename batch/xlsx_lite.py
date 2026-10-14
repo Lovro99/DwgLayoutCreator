@@ -26,6 +26,7 @@ SAMO stdlib.
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import time
@@ -40,6 +41,52 @@ _NS_PKGREL = "http://schemas.openxmlformats.org/package/2006/relationships"
 _NS_CT = "http://schemas.openxmlformats.org/package/2006/content-types"
 
 _CELL_REF_RE = re.compile(r"^([A-Za-z]+)([0-9]+)$")
+
+
+# ---------------------------------------------------------------------------
+# serijalizacija koja cuva izvorne namespace prefikse
+# ---------------------------------------------------------------------------
+#
+# ElementTree pri ET.tostring() preimenuje sve prefikse koje ne zna u ns0, ns1...
+# i ispise samo deklaracije koje stvarno koristi. Excel u svaki dio koji sprema
+# upise npr. mc:Ignorable="x14ac xr xr2 xr3" — atribut koji prefikse navodi kao
+# TEKST. Nakon ET re-serijalizacije ti prefiksi vise nisu deklarirani i Excel
+# datoteku otvara samo uz "We found a problem with some content". Zato se prije
+# serijalizacije registriraju prefiksi iz izvornog dokumenta, a korijenski tag
+# (sa svim xmlns deklaracijama i mc:Ignorable) zadrzava se doslovno.
+
+_START_TAG_RE = re.compile(rb"<(?![?!])[^>]*>")
+_XMLNS_RE = re.compile(rb"""\sxmlns(?::([\w.-]+))?\s*=\s*("[^"]*"|'[^']*')""")
+_XML_DECL = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+
+
+def _register_doc_namespaces(original: bytes) -> None:
+    """Registriraj u ET sve (prefiks, uri) parove deklarirane u dokumentu."""
+    for _event, (prefix, uri) in ET.iterparse(io.BytesIO(original), events=("start-ns",)):
+        if re.match(r"ns\d+$", prefix):   # ET te prefikse rezervira za sebe
+            continue
+        ET.register_namespace(prefix, uri)
+
+
+def _tostring_like(original: bytes, root: ET.Element) -> bytes:
+    """ET.tostring(root), ali s izvornim prefiksima i doslovno zadrzanim
+    korijenskim tagom iz `original`. Deklaracije koje ET treba, a izvorni
+    korijen ih nema (npr. bile su na ugnijezdenom elementu), dodaju se korijenu."""
+    _register_doc_namespaces(original)
+    out = ET.tostring(root, encoding="UTF-8", xml_declaration=False)
+    orig_m = _START_TAG_RE.search(original)
+    new_m = _START_TAG_RE.search(out)
+    if orig_m is None or new_m is None:
+        return _XML_DECL + out
+    root_tag = orig_m.group(0)
+    if root_tag.endswith(b"/>"):   # prazan korijen koji je sada dobio djecu
+        root_tag = root_tag[:-2].rstrip() + b">"
+    declared = {m.group(1) or b"" for m in _XMLNS_RE.finditer(root_tag)}
+    extra = b"".join(m.group(0) for m in _XMLNS_RE.finditer(new_m.group(0))
+                     if (m.group(1) or b"") not in declared)
+    if extra:
+        root_tag = root_tag[:-1] + extra + b">"
+    return _XML_DECL + root_tag + out[new_m.end():]
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +401,7 @@ def _write_sheet_column_a(sheet_bytes: bytes, values: list[str]) -> tuple[bytes,
 
     _update_dimension(root, sheet_data, main)
 
-    xml = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
+    xml = _tostring_like(sheet_bytes, root)
     return xml, warnings
 
 
@@ -512,8 +559,9 @@ def _add_sheet(parts: dict[str, bytes], sheet: str, values: list[str]) -> dict[s
     new_part = f"xl/worksheets/sheet{idx}.xml"
 
     rels_name = "xl/_rels/workbook.xml.rels"
-    rels_root = ET.fromstring(parts[rels_name]) if rels_name in parts else \
-        ET.fromstring(f'<Relationships xmlns="{_NS_PKGREL}"></Relationships>')
+    rels_src = parts[rels_name] if rels_name in parts else \
+        f'<Relationships xmlns="{_NS_PKGREL}"></Relationships>'.encode("utf-8")
+    rels_root = ET.fromstring(rels_src)
     used_ids = {rel.get("Id") for rel in rels_root}
     rid_num = 1
     while f"rId{rid_num}" in used_ids:
@@ -523,10 +571,11 @@ def _add_sheet(parts: dict[str, bytes], sheet: str, values: list[str]) -> dict[s
     rel.set("Id", new_rid)
     rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet")
     rel.set("Target", f"worksheets/sheet{idx}.xml")
-    parts[rels_name] = ET.tostring(rels_root, encoding="UTF-8", xml_declaration=True)
+    parts[rels_name] = _tostring_like(rels_src, rels_root)
 
     # 2) workbook.xml — dodaj <sheet>
-    wb_root = ET.fromstring(parts["xl/workbook.xml"])
+    wb_src = parts["xl/workbook.xml"]
+    wb_root = ET.fromstring(wb_src)
     main = f"{{{_NS_MAIN}}}"
     sheets_el = None
     for child in wb_root:
@@ -545,16 +594,17 @@ def _add_sheet(parts: dict[str, bytes], sheet: str, values: list[str]) -> dict[s
     new_sheet_el.set("name", sheet)
     new_sheet_el.set("sheetId", str(max_sheet_id + 1))
     new_sheet_el.set(f"{{{_NS_REL}}}id", new_rid)
-    parts["xl/workbook.xml"] = ET.tostring(wb_root, encoding="UTF-8", xml_declaration=True)
+    parts["xl/workbook.xml"] = _tostring_like(wb_src, wb_root)
 
     # 3) [Content_Types].xml — Override za novi part
     ct_name = "[Content_Types].xml"
-    ct_root = ET.fromstring(parts[ct_name])
+    ct_src = parts[ct_name]
+    ct_root = ET.fromstring(ct_src)
     override = ET.SubElement(ct_root, f"{{{_NS_CT}}}Override")
     override.set("PartName", f"/{new_part}")
     override.set("ContentType",
                  "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml")
-    parts[ct_name] = ET.tostring(ct_root, encoding="UTF-8", xml_declaration=True)
+    parts[ct_name] = _tostring_like(ct_src, ct_root)
 
     # 4) sam sheet part
     parts[new_part] = _sheet_xml_from_values(values)
@@ -567,7 +617,6 @@ def _add_sheet(parts: dict[str, bytes], sheet: str, values: list[str]) -> dict[s
 # ---------------------------------------------------------------------------
 
 def _repack_zip(parts: dict[str, bytes]) -> bytes:
-    import io
     buf = io.BytesIO()
     # [Content_Types].xml prvi (konvencija), ostalo redom
     order = sorted(parts, key=lambda n: (n != "[Content_Types].xml", n))
